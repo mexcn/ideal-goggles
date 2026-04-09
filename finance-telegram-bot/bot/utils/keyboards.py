@@ -102,7 +102,6 @@ def get_category_management_keyboard() -> InlineKeyboardMarkup:
     keyboard = [
         [InlineKeyboardButton("📋 Мои категории", callback_data="cat_list")],
         [InlineKeyboardButton("➕ Добавить категорию", callback_data="cat_add")],
-        [InlineKeyboardButton("✏️ Редактировать", callback_data="cat_edit")],
         [InlineKeyboardButton("🔙 Назад", callback_data="main_menu")],
     ]
     return InlineKeyboardMarkup(keyboard)

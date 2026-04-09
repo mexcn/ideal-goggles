@@ -62,19 +62,31 @@ async def budget_category_selected(update: Update, context: ContextTypes.DEFAULT
     """Выбрана категория для бюджета"""
     query = update.callback_query
     await query.answer()
-    
+
     action, category_id = extract_callback_data(query.data)
     context.user_data['budget_category_id'] = int(category_id)
-    
+
     db: Database = context.bot_data['db']
+    budget_service: BudgetService = context.bot_data['budget_service']
+    currency_service: CurrencyService = context.bot_data['currency_service']
+
     category = db.get_category(int(category_id))
-    
-    await query.edit_message_text(
-        f"🎯 Установка бюджета для категории:\n"
-        f"{category['icon']} {category['name']}\n\n"
-        f"Введите сумму лимита:"
-    )
-    
+    user = db.get_user(update.effective_user.id)
+    currency_symbol = currency_service.get_currency_symbol(user['default_currency'])
+
+    # Проверка существующего бюджета
+    existing_budget = budget_service.get_budget(update.effective_user.id, int(category_id))
+
+    text = f"🎯 Установка бюджета для категории:\n"
+    text += f"{category['icon']} {category['name']}\n\n"
+
+    if existing_budget:
+        text += f"Текущий лимит: {existing_budget['limit_amount']:,.2f} {currency_symbol}\n\n"
+
+    text += f"Введите новую сумму лимита:"
+
+    await query.edit_message_text(text)
+
     return WAITING_BUDGET_AMOUNT
 
 
@@ -127,12 +139,14 @@ async def budget_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Список бюджетов"""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = update.effective_user.id
+    db: Database = context.bot_data['db']
     budget_service: BudgetService = context.bot_data['budget_service']
-    
+    currency_service: CurrencyService = context.bot_data['currency_service']
+
     budgets = budget_service.get_all_budgets(user_id)
-    
+
     if not budgets:
         await query.edit_message_text(
             "У вас пока нет установленных бюджетов.\n\n"
@@ -140,10 +154,22 @@ async def budget_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_budget_management_keyboard()
         )
         return
-    
+
+    user = db.get_user(user_id)
+    currency_symbol = currency_service.get_currency_symbol(user['default_currency'])
+
+    text = "📋 Ваши бюджеты:\n\n"
+    for budget in budgets:
+        category_name = budget.get('category_name', 'Общий бюджет')
+        category_icon = budget.get('category_icon', '💰')
+        limit_amount = budget['limit_amount']
+        text += f"{category_icon} {category_name}: {limit_amount:,.2f} {currency_symbol}\n"
+
+    text += "\nВыберите действие:"
+
     await query.edit_message_text(
-        "📋 Ваши бюджеты:",
-        reply_markup=get_budget_list_keyboard(budgets)
+        text,
+        reply_markup=get_budget_management_keyboard()
     )
 
 
