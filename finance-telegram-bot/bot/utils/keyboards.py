@@ -126,8 +126,8 @@ def get_back_button(callback_data: str = "main_menu") -> InlineKeyboardMarkup:
 def get_expense_actions_keyboard(expense_id: int) -> InlineKeyboardMarkup:
     """Клавиатура действий с расходом"""
     keyboard = [
-        [InlineKeyboardButton("✏️ Редактировать", callback_data=f"expense_edit:{expense_id}")],
-        [InlineKeyboardButton("🗑️ Удалить", callback_data=f"expense_delete:{expense_id}")],
+        [InlineKeyboardButton("✏️ Изменить категорию", callback_data=f"move_expense:{expense_id}")],
+        [InlineKeyboardButton("🗑️ Удалить расход", callback_data=f"expense_delete:{expense_id}")],
         [InlineKeyboardButton("🔙 Назад", callback_data="main_menu")],
     ]
     return InlineKeyboardMarkup(keyboard)

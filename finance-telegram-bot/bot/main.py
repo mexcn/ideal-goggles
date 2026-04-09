@@ -2,9 +2,11 @@
 Главный файл запуска Telegram бота для управления финансами
 """
 import logging
+import os
 import sys
 from telegram import BotCommand
 from telegram.ext import Application
+from telegram.request import HTTPXRequest
 
 from .config import TELEGRAM_BOT_TOKEN, CURRENCY_UPDATE_INTERVAL
 from .database import Database
@@ -90,13 +92,34 @@ def main():
         
         # Создание приложения
         logger.info("Создание приложения Telegram...")
+
+        # Настройка прокси и таймаутов
+        proxy_url = os.getenv("PROXY_URL")
+        read_timeout = int(os.getenv("TELEGRAM_READ_TIMEOUT", "30"))
+        connect_timeout = int(os.getenv("TELEGRAM_CONNECT_TIMEOUT", "30"))
+
+        request = HTTPXRequest(
+            connection_pool_size=8,
+            read_timeout=read_timeout,
+            connect_timeout=connect_timeout,
+            proxy=proxy_url if proxy_url else None,
+        )
+
         application = (
             Application.builder()
             .token(TELEGRAM_BOT_TOKEN)
+            .request(request)
             .post_init(post_init)
             .post_shutdown(post_shutdown)
             .build()
         )
+
+        # Обработчик ошибок
+        async def error_handler(update, context):
+            """Глобальный обработчик ошибок"""
+            logger.error("Необработанная ошибка:", exc_info=context.error)
+
+        application.add_error_handler(error_handler)
         
         # Сохранение сервисов в bot_data для доступа из handlers
         application.bot_data['db'] = db

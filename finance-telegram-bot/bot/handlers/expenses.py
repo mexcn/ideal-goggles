@@ -164,7 +164,10 @@ async def quick_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Проверка регистрации
     if not db.get_user(user_id):
-        return  # Игнорируем сообщения от незарегистрированных пользователей
+        await update.message.reply_text(
+            "Сначала выполните команду /start для регистрации"
+        )
+        return
     
     expense_service: ExpenseService = context.bot_data['expense_service']
     budget_service: BudgetService = context.bot_data['budget_service']
@@ -229,13 +232,10 @@ async def quick_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if warning:
             response += f"\n\n{warning}"
         
-        # Добавляем inline кнопку для редактирования
-        from ..utils.keyboards import InlineKeyboardMarkup, InlineKeyboardButton
-        keyboard = [[
-            InlineKeyboardButton("✏️ Изменить категорию", callback_data=f"move_expense:{expense_id}")
-        ]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
+        # Добавляем inline кнопку для редактирования и удаления
+        from ..utils.keyboards import get_expense_actions_keyboard
+        reply_markup = get_expense_actions_keyboard(expense_id)
+
         await update.message.reply_text(response, reply_markup=reply_markup)
 
 
@@ -375,6 +375,67 @@ async def cancel_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
+# ==================== УДАЛЕНИЕ РАСХОДА ====================
+
+async def delete_expense_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение удаления расхода"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    expense_service: ExpenseService = context.bot_data['expense_service']
+
+    expense_id = int(query.data.split(':')[1])
+    expense = expense_service.get_expense(expense_id)
+
+    if not expense or expense['user_id'] != user_id:
+        await query.edit_message_text("❌ Расход не найден")
+        return
+
+    from ..utils.keyboards import get_confirmation_keyboard
+    await query.edit_message_text(
+        f"⚠️ Вы уверены, что хотите удалить этот расход?\n\n"
+        f"💰 {expense['amount_in_default']} ₽\n"
+        f"{expense['category_icon']} {expense['category_name']}\n"
+        f"📝 {expense['description'] or 'Без описания'}\n"
+        f"📅 {format_date(expense['expense_date'], 'long')}",
+        reply_markup=get_confirmation_keyboard(f"expense_delete:{expense_id}")
+    )
+
+
+async def delete_expense_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выполнение удаления расхода"""
+    query = update.callback_query
+    await query.answer()
+
+    user_id = update.effective_user.id
+    db: Database = context.bot_data['db']
+
+    expense_id = int(query.data.split(':')[1])
+    expense_service: ExpenseService = context.bot_data['expense_service']
+
+    expense = expense_service.get_expense(expense_id)
+
+    if not expense or expense['user_id'] != user_id:
+        await query.edit_message_text("❌ Расход не найден")
+        return
+
+    success = db.delete_expense(expense_id)
+
+    if success:
+        await query.edit_message_text(
+            "✅ Расход удалён",
+            reply_markup=get_main_menu_keyboard()
+        )
+    else:
+        await query.edit_message_text(
+            "❌ Ошибка при удалении расхода",
+            reply_markup=get_main_menu_keyboard()
+        )
+
+    context.user_data.clear()
+
+
 def register_expense_handlers(application):
     """Регистрация обработчиков расходов"""
     
@@ -407,6 +468,8 @@ def register_expense_handlers(application):
     application.add_handler(CallbackQueryHandler(add_expense_callback, pattern="^add_expense$"))
     application.add_handler(CallbackQueryHandler(move_expense_start, pattern="^move_expense:"))
     application.add_handler(CallbackQueryHandler(move_expense_to_category, pattern="^move_to:"))
+    application.add_handler(CallbackQueryHandler(delete_expense_confirm, pattern="^expense_delete:\d+$"))
+    application.add_handler(CallbackQueryHandler(delete_expense_execute, pattern="^confirm:expense_delete:"))
     application.add_handler(conv_handler)
     
     # Обработчик быстрого добавления расходов (обычные текстовые сообщения)
