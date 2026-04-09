@@ -111,6 +111,17 @@ class Database:
         except Exception as e:
             logger.error(f"Ошибка при получении пользователя: {e}")
             return None
+
+    def get_all_users(self) -> List[Dict[str, Any]]:
+        """Получение всех пользователей"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM users ORDER BY last_active DESC")
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Ошибка при получении списка пользователей: {e}")
+            return []
     
     def update_user_currency(self, user_id: int, currency: str) -> bool:
         """Обновление валюты пользователя"""

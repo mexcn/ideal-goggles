@@ -4,11 +4,13 @@
 import logging
 import os
 import sys
+from datetime import datetime
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import BotCommand
 from telegram.ext import Application
 from telegram.request import HTTPXRequest
 
-from .config import TELEGRAM_BOT_TOKEN, CURRENCY_UPDATE_INTERVAL
+from .config import TELEGRAM_BOT_TOKEN, CURRENCY_UPDATE_INTERVAL, DEFAULT_TIMEZONE
 from .database import Database
 from .services import CurrencyService, ExpenseService, BudgetService, ReportService
 from .handlers import (
@@ -70,6 +72,48 @@ async def post_init(application: Application) -> None:
 async def post_shutdown(application: Application) -> None:
     """Очистка при завершении работы"""
     logger.info("Остановка бота...")
+    scheduler = application.bot_data.get('scheduler')
+    if scheduler and scheduler.running:
+        scheduler.shutdown(wait=False)
+        logger.info("Планировщик остановлен")
+
+
+async def daily_reminder(application: Application) -> None:
+    """Ежедневное напоминание о добавлении расходов"""
+    db: Database = application.bot_data.get('db')
+    if not db:
+        return
+
+    # Получаем всех активных пользователей
+    try:
+        users = db.get_all_users()
+    except AttributeError:
+        logger.warning("Метод get_all_users() не найден в Database")
+        return
+
+    if not users:
+        return
+
+    message = (
+        "🔔 Напоминание\n\n"
+        "Не забудь добавить траты за день!\n\n"
+        "Просто отправь сумму и описание, например:\n"
+        "• 500 обед\n"
+        "• 1000 продукты"
+    )
+
+    sent_count = 0
+    for user in users:
+        try:
+            await application.bot.send_message(
+                chat_id=user['user_id'],
+                text=message
+            )
+            sent_count += 1
+        except Exception as e:
+            logger.warning(f"Не удалось отправить сообщение пользователю {user['user_id']}: {e}")
+
+    logger.info(f"Ежедневное напоминание: отправлено {sent_count}/{len(users)} пользователям")
 
 
 def main():
@@ -138,7 +182,28 @@ def main():
         register_settings_handlers(application)
         
         logger.info("Все обработчики зарегистрированы")
-        
+
+        # Настройка планировщика для ежедневных напоминаний
+        reminder_hour = int(os.getenv("REMINDER_HOUR", "21"))
+        reminder_minute = int(os.getenv("REMINDER_MINUTE", "0"))
+
+        scheduler = AsyncIOScheduler(timezone=DEFAULT_TIMEZONE)
+        scheduler.add_job(
+            daily_reminder,
+            'cron',
+            hour=reminder_hour,
+            minute=reminder_minute,
+            args=[application],
+            id='daily_reminder',
+            name='Ежедневное напоминание о тратах',
+            replace_existing=True,
+        )
+        scheduler.start()
+        logger.info(f"Планировщик запущен: напоминание в {reminder_hour:02d}:{reminder_minute:02d}")
+
+        # Сохраняем scheduler для остановки при shutdown
+        application.bot_data['scheduler'] = scheduler
+
         # Запуск бота
         logger.info("Запуск polling...")
         logger.info("Бот готов принимать команды!")
