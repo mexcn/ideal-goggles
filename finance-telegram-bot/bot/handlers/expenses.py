@@ -272,31 +272,51 @@ async def move_expense_to_category(update: Update, context: ContextTypes.DEFAULT
     """Перемещение расхода в выбранную категорию"""
     query = update.callback_query
     await query.answer()
-    
+
     user_id = update.effective_user.id
-    
+
     # Извлечение expense_id и category_id из callback_data
     # Формат: "move_to:expense_id:category_id"
     parts = query.data.split(':')
+    if len(parts) < 3:
+        await query.edit_message_text("❌ Ошибка: неверный формат данных")
+        return
+
     expense_id = int(parts[1])
     category_id = int(parts[2])
-    
+
     db: Database = context.bot_data['db']
     expense_service: ExpenseService = context.bot_data['expense_service']
-    
+
+    # Проверка принадлежности расхода
+    expense = expense_service.get_expense(expense_id)
+    if not expense or expense['user_id'] != user_id:
+        await query.edit_message_text("❌ Расход не найден")
+        return
+
+    # Проверка принадлежности категории
+    category = db.get_category(category_id)
+    if not category or category['user_id'] != user_id:
+        await query.edit_message_text("❌ Категория не найдена")
+        return
+
     # Обновление категории расхода
     success = expense_service.update_expense(expense_id, category_id=category_id)
-    
+
     if success:
         expense = expense_service.get_expense(expense_id)
         await query.edit_message_text(
             f"✅ Расход перемещён!\n\n"
             f"Новая категория: {expense['category_icon']} {expense['category_name']}\n"
             f"Сумма: {expense['amount_in_default']} ₽\n"
-            f"Описание: {expense['description'] or 'Без описания'}"
+            f"Описание: {expense['description'] or 'Без описания'}",
+            reply_markup=get_main_menu_keyboard()
         )
     else:
-        await query.edit_message_text("❌ Ошибка при перемещении расхода")
+        await query.edit_message_text(
+            "❌ Ошибка при перемещении расхода",
+            reply_markup=get_main_menu_keyboard()
+        )
 
 
 async def recent_expenses_command(update: Update, context: ContextTypes.DEFAULT_TYPE):

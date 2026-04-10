@@ -314,7 +314,7 @@ async def delete_category_execute(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text("❌ Категория не найдена")
         return
 
-    success = db.delete_category(category_id)
+    success = db.delete_category(category_id, user_id)
 
     if success:
         await query.edit_message_text(

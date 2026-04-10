@@ -254,17 +254,39 @@ class Database:
             logger.error(f"Ошибка при обновлении категории: {e}")
             return False
     
-    def delete_category(self, category_id: int) -> bool:
-        """Удаление категории (мягкое удаление)"""
+    def delete_category(self, category_id: int, user_id: int) -> bool:
+        """Удаление категории (мягкое удаление) с переносом расходов в 'Прочее'"""
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
+
+                # Находим категорию
+                cursor.execute("SELECT * FROM categories WHERE id = ? AND user_id = ?", (category_id, user_id))
+                category = cursor.fetchone()
+                if not category:
+                    return False
+
+                # Находим категорию "Прочее" для этого пользователя
                 cursor.execute(
-                    "UPDATE categories SET is_active = 0 WHERE id = ?",
-                    (category_id,)
+                    "SELECT id FROM categories WHERE user_id = ? AND name = 'Прочее' AND is_active = 1",
+                    (user_id,)
+                )
+                other_row = cursor.fetchone()
+
+                if other_row and other_row['id'] != category_id:
+                    # Переносим расходы в "Прочее"
+                    cursor.execute(
+                        "UPDATE expenses SET category_id = ? WHERE category_id = ? AND user_id = ?",
+                        (other_row['id'], category_id, user_id)
+                    )
+
+                # Мягкое удаление категории
+                cursor.execute(
+                    "UPDATE categories SET is_active = 0 WHERE id = ? AND user_id = ?",
+                    (category_id, user_id)
                 )
                 conn.commit()
-                return cursor.rowcount > 0
+                return True
         except Exception as e:
             logger.error(f"Ошибка при удалении категории: {e}")
             return False
