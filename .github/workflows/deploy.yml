@@ -1,0 +1,24 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: 
+      - main
+  workflow_dispatch:  # Позволяет запускать вручную
+
+jobs:
+  deploy:
+    name: Deploy Python Bot
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: ? Executing remote SSH commands
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          script: |
+            cd /home/deployer/bot/ideal-goggles
+            ./deploy.sh
