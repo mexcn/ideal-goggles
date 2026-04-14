@@ -373,15 +373,19 @@ async def recent_expenses_command(update: Update, context: ContextTypes.DEFAULT_
 
 async def move_expense_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда для перемещения расхода /move_ID"""
-    user_id = update.effective_user.id
+    text = update.message.text.strip()
 
-    # Извлечение expense_id из команды
+    # Проверяем формат /move_ID
+    if not text.startswith('/move_'):
+        return  # Не команда move, пропускаем
+
     try:
-        expense_id = int(update.message.text.split('_')[1])
+        expense_id = int(text.split('_')[1])
     except (IndexError, ValueError):
-        await update.message.reply_text("❌ Неверный формат команды")
+        await update.message.reply_text("❌ Неверный формат команды. Используйте /move_ID")
         return
 
+    user_id = update.effective_user.id
     db: Database = context.bot_data['db']
     expense_service: ExpenseService = context.bot_data['expense_service']
 
@@ -505,11 +509,11 @@ def register_expense_handlers(application):
     application.add_handler(CommandHandler("recent", recent_expenses_command))
     application.add_handler(CommandHandler("expenses", recent_expenses_command))
     
-    # Обработчик команд перемещения /move_ID
+    # Обработчик команд перемещения /move_ID (группа -1, высокий приоритет)
     application.add_handler(MessageHandler(
-        filters.Regex(r'^/move_\d+$'),
+        filters.TEXT & ~filters.COMMAND,
         move_expense_command
-    ))
+    ), group=-1)
     
     application.add_handler(CallbackQueryHandler(add_expense_callback, pattern="^add_expense$"))
     application.add_handler(CallbackQueryHandler(move_expense_start, pattern="^move_expense:"))
