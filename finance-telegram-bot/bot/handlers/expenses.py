@@ -157,32 +157,36 @@ async def quick_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Быстрое добавление расхода из обычного сообщения
     Формат: "500 транспорт поездка на такси" -> автоматически определит категорию
     """
+    # Не обрабатываем, если пользователь внутри ConversationHandler
+    if context.user_data.get('category_id') is not None:
+        return
+
     user_id = update.effective_user.id
     text = update.message.text
-    
+
     db: Database = context.bot_data['db']
-    
+
     # Проверка регистрации
     if not db.get_user(user_id):
         await update.message.reply_text(
             "Сначала выполните команду /start для регистрации"
         )
         return
-    
+
     expense_service: ExpenseService = context.bot_data['expense_service']
     budget_service: BudgetService = context.bot_data['budget_service']
     currency_service: CurrencyService = context.bot_data['currency_service']
-    
+
     # Парсинг текста
     parsed = parse_expense_text(text)
-    
+
     if not parsed or parsed['amount'] is None:
         # Не похоже на расход, игнорируем
         return
-    
+
     # Определение категории
     categories = db.get_categories(user_id)
-    
+
     # Если категория определена парсером, ищем её в базе
     selected_category = None
     if parsed.get('category'):
@@ -190,19 +194,19 @@ async def quick_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
             (c for c in categories if c['name'] == parsed['category']),
             None
         )
-    
+
     # Если категория не найдена, используем "Прочее"
     if not selected_category:
         selected_category = next((c for c in categories if c['name'] == 'Прочее'), None)
-    
+
     if not selected_category:
         # Если категории "Прочее" нет, берем первую
         selected_category = categories[0] if categories else None
-    
+
     if not selected_category:
         await update.message.reply_text("❌ Ошибка: категории не найдены")
         return
-    
+
     # Добавление расхода
     expense_id = expense_service.add_expense(
         user_id=user_id,
@@ -211,27 +215,27 @@ async def quick_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
         currency=parsed['currency'],
         description=parsed['description']
     )
-    
+
     if expense_id:
         expense = expense_service.get_expense(expense_id)
         user = db.get_user(user_id)
         currency_symbol = currency_service.get_currency_symbol(user['default_currency'])
-        
+
         response = f"✅ Расход добавлен!\n\n"
         response += f"💰 {format_amount(expense['amount_in_default'], user['default_currency'], False)} {currency_symbol}\n"
         response += f"{expense['category_icon']} {expense['category_name']}\n"
-        
+
         if expense['description']:
             response += f"📝 {expense['description']}"
-        
+
         # Проверка бюджета
         exceeded, warning = budget_service.check_budget_after_expense(
             user_id, selected_category['id'], expense['amount_in_default']
         )
-        
+
         if warning:
             response += f"\n\n{warning}"
-        
+
         # Добавляем inline кнопку для редактирования и удаления
         from ..utils.keyboards import get_expense_actions_keyboard
         reply_markup = get_expense_actions_keyboard(expense_id)
@@ -274,16 +278,25 @@ async def move_expense_to_category(update: Update, context: ContextTypes.DEFAULT
     await query.answer()
 
     user_id = update.effective_user.id
+    callback_data = query.data
+
+    logger.info(f"move_expense_to_category: callback_data={callback_data}, user_id={user_id}")
 
     # Извлечение expense_id и category_id из callback_data
     # Формат: "move_to:expense_id:category_id"
-    parts = query.data.split(':')
+    parts = callback_data.split(':')
     if len(parts) < 3:
+        logger.error(f"Неверный формат callback_data: {callback_data}")
         await query.edit_message_text("❌ Ошибка: неверный формат данных")
         return
 
-    expense_id = int(parts[1])
-    category_id = int(parts[2])
+    try:
+        expense_id = int(parts[1])
+        category_id = int(parts[2])
+    except (ValueError, IndexError) as e:
+        logger.error(f"Ошибка парсинга callback_data '{callback_data}': {e}")
+        await query.edit_message_text("❌ Ошибка: неверный формат данных")
+        return
 
     db: Database = context.bot_data['db']
     expense_service: ExpenseService = context.bot_data['expense_service']
@@ -299,6 +312,8 @@ async def move_expense_to_category(update: Update, context: ContextTypes.DEFAULT
     if not category or category['user_id'] != user_id:
         await query.edit_message_text("❌ Категория не найдена")
         return
+
+    logger.info(f"Перемещение расхода {expense_id} в категорию {category_id}")
 
     # Обновление категории расхода
     success = expense_service.update_expense(expense_id, category_id=category_id)

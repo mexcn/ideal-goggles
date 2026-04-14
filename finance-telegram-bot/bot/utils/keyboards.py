@@ -21,30 +21,31 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
-def get_categories_keyboard(categories: List[Dict[str, Any]], 
+def get_categories_keyboard(categories: List[Dict[str, Any]],
                            callback_prefix: str = "cat",
                            columns: int = 3) -> InlineKeyboardMarkup:
     """Клавиатура для выбора категории"""
     keyboard = []
     row = []
-    
+
     for i, category in enumerate(categories):
+        # callback_data содержит ТОЛЬКО prefix и числовой ID
         button = InlineKeyboardButton(
             f"{category['icon']} {category['name'][:15]}",
             callback_data=f"{callback_prefix}:{category['id']}"
         )
         row.append(button)
-        
+
         if (i + 1) % columns == 0:
             keyboard.append(row)
             row = []
-    
+
     if row:
         keyboard.append(row)
-    
+
     # Кнопка отмены
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
-    
+
     return InlineKeyboardMarkup(keyboard)
 
 
