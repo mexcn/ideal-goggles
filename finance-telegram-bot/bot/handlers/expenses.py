@@ -510,8 +510,9 @@ def register_expense_handlers(application):
     application.add_handler(CommandHandler("expenses", recent_expenses_command))
     
     # Обработчик команд перемещения /move_ID (группа -1, высокий приоритет)
+    # Используем filters.TEXT | filters.COMMAND т.к. /move_N начинается с / и считается командой
     application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND,
+        filters.TEXT | filters.COMMAND,
         move_expense_command
     ), group=-1)
     
