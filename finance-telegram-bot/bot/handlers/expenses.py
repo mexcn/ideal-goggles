@@ -2,10 +2,8 @@
 Обработчики для работы с расходами
 """
 import logging
-import re
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
-from telegram.ext.filters import MessageFilter
 
 from ..database import Database
 from ..services import ExpenseService, BudgetService, CurrencyService
@@ -14,17 +12,6 @@ from ..utils.parsers import parse_expense_text, extract_callback_data
 from ..utils.formatters import format_expense, format_amount, format_date
 
 logger = logging.getLogger(__name__)
-
-
-class MoveExpenseFilter(filters.BaseFilter):
-    """Кастомный фильтр для команды /move_ID"""
-    name = "move_expense_filter"
-
-    def filter(self, update) -> bool:
-        text = getattr(update.effective_message, 'text', '') or ''
-        return bool(re.match(r'^/move_\d+$', text))
-
-move_expense_filter = MoveExpenseFilter()
 
 # Состояния для ConversationHandler
 WAITING_AMOUNT, WAITING_CATEGORY = range(2)
@@ -353,78 +340,79 @@ async def move_expense_to_category(update: Update, context: ContextTypes.DEFAULT
 async def recent_expenses_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда для просмотра последних расходов"""
     user_id = update.effective_user.id
-    
+
     db: Database = context.bot_data['db']
     expense_service: ExpenseService = context.bot_data['expense_service']
     currency_service: CurrencyService = context.bot_data['currency_service']
-    
+
     user = db.get_user(user_id)
     if not user:
         await update.message.reply_text("Сначала выполните /start")
         return
-    
+
     # Получение последних 10 расходов
     expenses = expense_service.get_recent_expenses(user_id, limit=10)
-    
+
     if not expenses:
         await update.message.reply_text("У вас пока нет расходов")
         return
-    
+
     currency_symbol = currency_service.get_currency_symbol(user['default_currency'])
-    
-    response = "📋 Последние расходы:\n\n"
-    
+
+    # Формируем сообщение с inline-кнопками для каждого расхода
+    from ..utils.keyboards import InlineKeyboardMarkup, InlineKeyboardButton
+
     for exp in expenses:
-        response += f"{exp['category_icon']} {format_amount(exp['amount_in_default'], user['default_currency'], False)} {currency_symbol}"
+        text = (
+            f"{exp['category_icon']} {format_amount(exp['amount_in_default'], user['default_currency'], False)} {currency_symbol}"
+        )
         if exp['description']:
-            response += f" - {exp['description']}"
-        response += f"\n📅 {format_date(exp['expense_date'], 'relative')}\n"
-        response += f"💡 Нажмите для изменения: /move_{exp['id']}\n\n"
-    
-    await update.message.reply_text(response)
+            text += f" - {exp['description']}"
+        text += f"\n📅 {format_date(exp['expense_date'], 'relative')}"
+
+        # Inline-кнопки действий для каждого расхода
+        keyboard = [
+            [
+                InlineKeyboardButton("✏️ Переместить", callback_data=f"move_expense:{exp['id']}"),
+                InlineKeyboardButton("🗑️ Удалить", callback_data=f"expense_delete:{exp['id']}"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        await update.message.reply_text(text, reply_markup=reply_markup)
 
 
-async def move_expense_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда для перемещения расхода /move_ID"""
-    text = update.message.text.strip()
-
-    # Проверяем формат /move_ID
-    if not text.startswith('/move_'):
-        return  # Не команда move, пропускаем
-
-    try:
-        expense_id = int(text.split('_')[1])
-    except (IndexError, ValueError):
-        await update.message.reply_text("❌ Неверный формат команды. Используйте /move_ID")
-        return
+async def move_expense_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение действия: переместить или удалить"""
+    query = update.callback_query
+    await query.answer()
 
     user_id = update.effective_user.id
+    expense_id = int(query.data.split(':')[1])
+
     db: Database = context.bot_data['db']
     expense_service: ExpenseService = context.bot_data['expense_service']
 
-    # Получение расхода
     expense = expense_service.get_expense(expense_id)
-
     if not expense or expense['user_id'] != user_id:
-        await update.message.reply_text("❌ Расход не найден")
+        await query.edit_message_text("❌ Расход не найден")
         return
 
-    # Получение категорий
-    categories = db.get_categories(user_id)
-
-    # Клавиатура с категориями + кнопка удаления
     from ..utils.keyboards import InlineKeyboardMarkup, InlineKeyboardButton
-    keyboard = get_categories_keyboard(categories, f"move_to:{expense_id}").inline_keyboard
-    keyboard.append([
-        InlineKeyboardButton("🗑️ Удалить расход", callback_data=f"expense_delete:{expense_id}")
-    ])
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    keyboard = [
+        [
+            InlineKeyboardButton("✏️ Изменить категорию", callback_data=f"move_expense:{expense_id}"),
+            InlineKeyboardButton("🗑️ Удалить расход", callback_data=f"expense_delete:{expense_id}"),
+        ],
+        [InlineKeyboardButton("🔙 Назад", callback_data="cancel")],
+    ]
 
-    await update.message.reply_text(
-        f"Расход: {expense['amount_in_default']} ₽ - {expense['description']}\n"
-        f"Текущая категория: {expense['category_icon']} {expense['category_name']}\n\n"
-        f"Выберите новую категорию или удалите расход:",
-        reply_markup=reply_markup
+    await query.edit_message_text(
+        f"Расход: {expense['amount_in_default']} ₽ - {expense['description'] or 'Без описания'}\n"
+        f"Текущая категория: {expense['category_icon']} {expense['category_name']}\n"
+        f"📅 {format_date(expense['expense_date'], 'relative')}\n\n"
+        f"Что вы хотите сделать?",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
@@ -521,13 +509,7 @@ def register_expense_handlers(application):
     application.add_handler(CommandHandler("add", add_expense_command))
     application.add_handler(CommandHandler("recent", recent_expenses_command))
     application.add_handler(CommandHandler("expenses", recent_expenses_command))
-    
-    # Обработчик команд перемещения /move_ID
-    application.add_handler(MessageHandler(
-        move_expense_filter,
-        move_expense_command
-    ))
-    
+
     application.add_handler(CallbackQueryHandler(add_expense_callback, pattern="^add_expense$"))
     application.add_handler(CallbackQueryHandler(move_expense_start, pattern="^move_expense:"))
     application.add_handler(CallbackQueryHandler(move_expense_to_category, pattern="^move_to:"))
