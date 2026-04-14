@@ -83,15 +83,15 @@ async def amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка введенной суммы и описания"""
     user_id = update.effective_user.id
     text = update.message.text
-    
+
     db: Database = context.bot_data['db']
     expense_service: ExpenseService = context.bot_data['expense_service']
     budget_service: BudgetService = context.bot_data['budget_service']
     currency_service: CurrencyService = context.bot_data['currency_service']
-    
+
     # Парсинг текста
     parsed = parse_expense_text(text)
-    
+
     if not parsed or parsed['amount'] is None:
         await update.message.reply_text(
             "❌ Не удалось распознать сумму.\n\n"
@@ -101,9 +101,9 @@ async def amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• 100$ описание"
         )
         return WAITING_AMOUNT
-    
+
     category_id = context.user_data.get('category_id')
-    
+
     # Добавление расхода
     expense_id = expense_service.add_expense(
         user_id=user_id,
@@ -112,30 +112,30 @@ async def amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
         currency=parsed['currency'],
         description=parsed['description']
     )
-    
+
     if expense_id:
         # Получение информации о расходе
         expense = expense_service.get_expense(expense_id)
         user = db.get_user(user_id)
         currency_symbol = currency_service.get_currency_symbol(user['default_currency'])
-        
+
         response = f"✅ Расход добавлен!\n\n"
         response += f"💰 {format_amount(expense['amount_in_default'], user['default_currency'], False)} {currency_symbol}\n"
         response += f"{expense['category_icon']} Категория: {expense['category_name']}\n"
-        
+
         if expense['description']:
             response += f"📝 {expense['description']}\n"
-        
+
         response += f"📅 {format_date(expense['expense_date'], 'long')}"
-        
+
         # Проверка бюджета
         exceeded, warning = budget_service.check_budget_after_expense(
             user_id, category_id, expense['amount_in_default']
         )
-        
+
         if warning:
             response += f"\n\n{warning}"
-        
+
         await update.message.reply_text(
             response,
             reply_markup=get_main_menu_keyboard()
@@ -145,10 +145,12 @@ async def amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "❌ Ошибка при добавлении расхода. Попробуйте еще раз.",
             reply_markup=get_main_menu_keyboard()
         )
-    
-    # Очистка context
-    context.user_data.clear()
-    
+
+    # Устанавливаем флаг ПЕРЕД очисткой, чтобы quick_expense (группа 1) его увидел
+    context.user_data['_conv_processed'] = True
+    # Удаляем только category_id, не очищаем всё
+    context.user_data.pop('category_id', None)
+
     return ConversationHandler.END
 
 
@@ -157,8 +159,9 @@ async def quick_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Быстрое добавление расхода из обычного сообщения
     Формат: "500 транспорт поездка на такси" -> автоматически определит категорию
     """
-    # Не обрабатываем, если пользователь внутри ConversationHandler
-    if context.user_data.get('category_id') is not None:
+    # Пропускаем, если сообщение уже обработано ConversationHandler
+    if context.user_data.get('_conv_processed'):
+        context.user_data.pop('_conv_processed', None)
         return
 
     user_id = update.effective_user.id
@@ -371,32 +374,40 @@ async def recent_expenses_command(update: Update, context: ContextTypes.DEFAULT_
 async def move_expense_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Команда для перемещения расхода /move_ID"""
     user_id = update.effective_user.id
-    
+
     # Извлечение expense_id из команды
     try:
         expense_id = int(update.message.text.split('_')[1])
     except (IndexError, ValueError):
         await update.message.reply_text("❌ Неверный формат команды")
         return
-    
+
     db: Database = context.bot_data['db']
     expense_service: ExpenseService = context.bot_data['expense_service']
-    
+
     # Получение расхода
     expense = expense_service.get_expense(expense_id)
-    
+
     if not expense or expense['user_id'] != user_id:
         await update.message.reply_text("❌ Расход не найден")
         return
-    
+
     # Получение категорий
     categories = db.get_categories(user_id)
-    
+
+    # Клавиатура с категориями + кнопка удаления
+    from ..utils.keyboards import InlineKeyboardMarkup, InlineKeyboardButton
+    keyboard = get_categories_keyboard(categories, f"move_to:{expense_id}").inline_keyboard
+    keyboard.append([
+        InlineKeyboardButton("🗑️ Удалить расход", callback_data=f"expense_delete:{expense_id}")
+    ])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
     await update.message.reply_text(
         f"Расход: {expense['amount_in_default']} ₽ - {expense['description']}\n"
         f"Текущая категория: {expense['category_icon']} {expense['category_name']}\n\n"
-        f"Выберите новую категорию:",
-        reply_markup=get_categories_keyboard(categories, f"move_to:{expense_id}")
+        f"Выберите новую категорию или удалите расход:",
+        reply_markup=reply_markup
     )
 
 
