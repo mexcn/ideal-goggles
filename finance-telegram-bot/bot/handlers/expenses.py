@@ -2,8 +2,10 @@
 Обработчики для работы с расходами
 """
 import logging
+import re
 from telegram import Update
 from telegram.ext import ContextTypes, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters
+from telegram.ext.filters import MessageFilter
 
 from ..database import Database
 from ..services import ExpenseService, BudgetService, CurrencyService
@@ -12,6 +14,17 @@ from ..utils.parsers import parse_expense_text, extract_callback_data
 from ..utils.formatters import format_expense, format_amount, format_date
 
 logger = logging.getLogger(__name__)
+
+
+class MoveExpenseFilter(filters.BaseFilter):
+    """Кастомный фильтр для команды /move_ID"""
+    name = "move_expense_filter"
+
+    def filter(self, update) -> bool:
+        text = getattr(update.effective_message, 'text', '') or ''
+        return bool(re.match(r'^/move_\d+$', text))
+
+move_expense_filter = MoveExpenseFilter()
 
 # Состояния для ConversationHandler
 WAITING_AMOUNT, WAITING_CATEGORY = range(2)
@@ -509,12 +522,11 @@ def register_expense_handlers(application):
     application.add_handler(CommandHandler("recent", recent_expenses_command))
     application.add_handler(CommandHandler("expenses", recent_expenses_command))
     
-    # Обработчик команд перемещения /move_ID (группа -1, высокий приоритет)
-    # Используем filters.TEXT | filters.COMMAND т.к. /move_N начинается с / и считается командой
+    # Обработчик команд перемещения /move_ID
     application.add_handler(MessageHandler(
-        filters.TEXT | filters.COMMAND,
+        move_expense_filter,
         move_expense_command
-    ), group=-1)
+    ))
     
     application.add_handler(CallbackQueryHandler(add_expense_callback, pattern="^add_expense$"))
     application.add_handler(CallbackQueryHandler(move_expense_start, pattern="^move_expense:"))
